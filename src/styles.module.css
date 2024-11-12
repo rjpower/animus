@@ -1,0 +1,17 @@
+.validating {
+  background-color: #90EE90 !important; /* Light green */
+  transition: background-color 0.3s ease;
+}
+
+.correct {
+  background-color: #98FB98 !important; /* Pale green */
+}
+
+.incorrect {
+  background-color: #FFB6C1 !important; /* Light red */
+}
+
+.dynamicForm {
+  width: 100%;
+  height: 100%;
+}

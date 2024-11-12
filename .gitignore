@@ -1,0 +1,20 @@
+.aider*
+.env
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Logs
+npm-debug.log*
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+log/
+logs/
