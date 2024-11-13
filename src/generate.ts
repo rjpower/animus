@@ -1,5 +1,11 @@
 import type { AIModel, GenerateFormRequest, ValidationRequest } from "./common";
 import { LLMQuery } from "./llm";
+import * as typia from "typia";
+
+interface ValidationResponse {
+    isCorrect: boolean;
+    feedback: string;
+}
 
 export async function generateFormFromImage({
   imageData,
@@ -13,9 +19,9 @@ export async function generateFormFromImage({
     .image(imageData);
 
   let response = await query.execute();
-  if (response.startsWith("```html")) {
-    // strip ```html guard from response if present
-    response = response.replace("```html", "");
+  if (response.startsWith("```javascript")) {
+    // strip ``` guard from response if present
+    response = response.replace("```javascript", "");
     response = response.replace("```", "");
   }
 
@@ -25,15 +31,8 @@ export async function generateFormFromImage({
 export async function validateUserResponse({
   model,
   screenshot,
-}: ValidationRequest): Promise<{ isCorrect: boolean; feedback: string }> {
-  const schema = {
-    type: "object",
-    properties: {
-      isCorrect: { type: "boolean" },
-      feedback: { type: "string" },
-    },
-    required: ["isCorrect", "feedback"],
-  };
+}: ValidationRequest): Promise<ValidationResponse> {
+  const schema = typia.json.application<[ValidationResponse]>();
 
   const query = new LLMQuery(model as AIModel)
     .system(
@@ -56,5 +55,5 @@ Return a JSON object with feedback (string) and isCorrect (boolean) fields.
 
   const response = await query.execute();
   console.log("Response", response);
-  return response as { isCorrect: boolean; feedback: string };
+  return response as ValidationResponse;
 }

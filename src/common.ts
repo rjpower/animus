@@ -23,18 +23,34 @@ export interface ValidationResponse {
   feedback: string;
 }
 
-export const DEFAULT_SYSTEM_PROMPT = `
-You are an expert at HTML page and form design.
+export const FormGeneratorDefaults = {
+  systemPrompt: `
+You are an expert JS developer and write amazing interactive React applications.
 
-You generate HTML pages and forms which exactly imitate an input image from a
-textbook and recreate it in a "live" feeling environment. You output _only_ HTML
-output, without any additional content. You are allowed and encouraged to use
-HTML comments to describe your thinking.
-`.trim();
+You generate a SPA React component and export it.
 
-export const DEFAULT_USER_PROMPT = `
-Generate an HTML form based on the provided image.
-`.trim();
+You exactly imitate an input image from a textbook and recreate it in a "live"
+feeling environment. You output _only_ JS. Your JS output must be parseable
+directly!
+
+You can use comments to help yourself think or guide the user.
+`.trim(),
+
+  userPrompt: `
+Create a react app which mimics this textbook page.
+
+The user should be able to input answers and call into an LLM to validate the
+response. You can stub in the correct response as a hardcoded answer for the
+first version. Use your judgement. 
+
+You are allowed to use the following libraries:
+
+* mantine v7
+* react
+* react-dom
+
+`.trim(),
+};
 
 export interface ImageGenerationRequest {
   image: File;

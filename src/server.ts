@@ -1,11 +1,12 @@
 import express, { NextFunction, Request, Response } from "express";
+import typia from "typia";
 import expressWinston from "express-winston";
+import fs from "fs";
 import multer from "multer";
 import path from "path";
 import winston from "winston";
-import fs from "fs";
 
-import { AIModel, ValidationRequest } from "./common";
+import { AIModel, FormGeneratorDefaults, ValidationRequest } from "./common";
 import { generateFormFromImage, validateUserResponse } from "./generate";
 
 function ensureLogDir(subDir: string): string {
@@ -18,7 +19,9 @@ function ensureLogDir(subDir: string): string {
 
 function getTimestamp(): string {
   const now = new Date();
-  return `${now.toISOString().split("T")[0]}-${now.getHours()}-${now.getMinutes()}`;
+  return `${
+    now.toISOString().split("T")[0]
+  }-${now.getHours()}-${now.getMinutes()}`;
 }
 
 function saveScreenshot(buffer: Buffer, routeName: string): string {
@@ -47,7 +50,7 @@ const logger = winston.createLogger({
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
-        winston.format.simple(),
+        winston.format.simple()
       ),
     }),
   ],
@@ -61,7 +64,7 @@ app.use(
     msg: "HTTP {{req.method}} {{req.url}} {{res.statusCode}} {{res.responseTime}}ms",
     expressFormat: true,
     colorize: true,
-  }),
+  })
 );
 
 // Error logging middleware
@@ -69,7 +72,7 @@ app.use(
   expressWinston.errorLogger({
     winstonInstance: logger,
     meta: true,
-  }),
+  })
 );
 
 // Regular middleware
@@ -117,12 +120,38 @@ app.post(
     } catch (error) {
       next(error);
     }
-  },
+  }
 );
+
+app.get("/api/demo/:imageName", async (req, res) => {
+  const imagePath = path.join(
+    __dirname,
+    "../static/demo",
+    req.params.imageName
+  );
+  try {
+    const imageBuffer = fs.readFileSync(imagePath);
+    const imageData = {
+      base64: imageBuffer.toString("base64"),
+      mimeType: "image/jpeg",
+    };
+
+    const formHtml = await generateFormFromImage({
+      imageData,
+      model: AIModel.GEMINI_FLASH_8B,
+      systemPrompt: FormGeneratorDefaults.systemPrompt,
+      userPrompt: FormGeneratorDefaults.userPrompt,
+    });
+
+    res.json({ html: formHtml });
+  } catch (error) {
+    res.status(404).json({ error: "Demo image not found" });
+  }
+});
 
 app.post("/api/validate", async (req, res, next) => {
   try {
-    const validationRequest = req.body as ValidationRequest;
+    const validationRequest = typia.assert<ValidationRequest>(req.body);
 
     const imageBuffer = Buffer.from(validationRequest.screenshot, "base64");
     saveScreenshot(imageBuffer, "validate");

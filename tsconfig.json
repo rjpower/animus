@@ -1,7 +1,12 @@
 {
   "compilerOptions": {
     "target": "es2017",
-    "lib": ["dom", "dom.iterable", "esnext", "es2015"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext",
+      "es2015"
+    ],
     "types": [
       "node"
     ],
@@ -10,6 +15,7 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "strict": true,
+    "strictNullChecks": true,
     "forceConsistentCasingInFileNames": true,
     "module": "commonjs",
     "moduleResolution": "node",
@@ -20,11 +26,16 @@
     "plugins": [
       {
         "name": "typescript-plugin-css-modules"
+      },
+      {
+        "transform": "typia/lib/transform"
       }
-    ]
+    ],
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "ts-node": {
-    "transpileOnly": false,
+    "transpileOnly": false
   }
 }

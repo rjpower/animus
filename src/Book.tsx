@@ -11,18 +11,48 @@ import { useForm } from "@mantine/form";
 import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { DynamicForm } from "./DynamicForm";
-import { AIModel, DEFAULT_SYSTEM_PROMPT, DEFAULT_USER_PROMPT } from "./common";
+import { AIModel, FormGeneratorDefaults } from "./common";
+
+function demoButton(
+  demoLink: string,
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>,
+  setFormHtml: React.Dispatch<React.SetStateAction<string>>
+) {
+  return (
+    <Button
+      variant="light"
+      onClick={async () => {
+        setLoading(true);
+        try {
+          const response = await fetch(`/api/demo/${demoLink}`);
+          const data = await response.json();
+          setFormHtml(data.html);
+        } catch (error) {
+          console.error("Error loading demo:", error);
+        } finally {
+          setLoading(false);
+        }
+      }}
+    >
+      Tobira Worksheet
+    </Button>
+  );
+}
 
 export const Book: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [formHtml, setFormHtml] = useState<string>(
-    `Generated form will appear here.`,
+    `function Component() {
+      return <div>Generated form will appear here.</div>;
+    }
+
+    export default Component;`
   );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const form = useForm({
     initialValues: {
-      systemPrompt: DEFAULT_SYSTEM_PROMPT,
-      userPrompt: DEFAULT_USER_PROMPT,
+      systemPrompt: FormGeneratorDefaults.systemPrompt,
+      userPrompt: FormGeneratorDefaults.userPrompt,
     },
     validate: {
       systemPrompt: (value) =>
@@ -48,7 +78,7 @@ export const Book: React.FC = () => {
     formData.append("image", selectedFile);
     formData.append(
       "model",
-      localStorage.getItem("selectedModel") || AIModel.GPT4O,
+      localStorage.getItem("selectedModel") || AIModel.GPT4O
     );
     formData.append("systemPrompt", form.values.systemPrompt);
     formData.append("userPrompt", form.values.userPrompt);
@@ -89,6 +119,13 @@ export const Book: React.FC = () => {
       <LoadingOverlay visible={loading} />
 
       <div style={{ flex: 1, overflow: "auto" }}>
+        <Group>
+          <Text size="sm">Try a demo:</Text>
+          {demoButton("tobira-4.2.jpg", setLoading, setFormHtml)}
+          {demoButton("tobira-5.3.jpg", setLoading, setFormHtml)}
+          {demoButton("tobira-5.9.jpg", setLoading, setFormHtml)}
+        </Group>
+
         <Paper
           p="xl"
           {...getRootProps()}
@@ -104,8 +141,8 @@ export const Book: React.FC = () => {
               {isDragActive
                 ? "Drop the image here"
                 : selectedFile
-                  ? `Selected: ${selectedFile.name}`
-                  : "Drag and drop an image here, or click to select"}
+                ? `Selected: ${selectedFile.name}`
+                : "Drag and drop an image here, or click to select"}
             </Text>
             <Button>Select Image</Button>
           </Group>

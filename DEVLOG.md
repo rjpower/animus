@@ -1,4 +1,30 @@
-# DevLog for Animus
+# Animus Devlog
+
+## 2024-11-13 1000
+
+Revisiting this while sober: what's the best workflow? It's difficult for the
+LLMs to construct a webform which exactly captures the original book workflow
+without help. I can do:
+
+* show the uploaded image side-by-side with the form, and provide it as context
+  when answering questions?
+
+The live update is neat, but feels overkill? I think a manual submit would be
+easier to structure the prompts for and simplify the user interaction: I would
+no longer need this hacky highlighting etc.
+
+I'm not thrilled about the manual scanning the output from the LLM to generate
+the live form. I could try to have the LLM generate the complete form for me as
+a React app, and just inject globals for common libraries? This prompt with
+Sonnet works fairly well and generates a nice-looking form as an artifact.
+
+> Create a react app which mimics this textbook page. The user should be able to
+> input answers and call into an LLM to validate the response. You can stub in the
+> correct response as a hardcoded answer for the first version. Use your
+> judgement. Explain your reasoning in detail.
+
+I could wire this up to some logic for letting it call an LLM to verify the
+results.
 
 ## 2024-11-12 2000
 

@@ -16,6 +16,7 @@ import { Image } from "@mantine/core";
 import { Book } from "./Book";
 import { Config } from "./Config";
 import { Landing } from "./Landing";
+import { ComponentLoaderTest } from "./ComponentLoaderTest";
 
 const App: React.FC = () => {
   return (
@@ -38,17 +39,14 @@ const App: React.FC = () => {
                     <Title order={4}>Animus Codex</Title>
                   </Group>
                   <Group ml="xl">
-                    <Link
-                      to="/"
-                      style={{ textDecoration: "none", color: "inherit" }}
-                    >
+                    <Link to="/book">
                       <Text fw={500}>Book</Text>
                     </Link>
-                    <Link
-                      to="/config"
-                      style={{ textDecoration: "none", color: "inherit" }}
-                    >
+                    <Link to="/config">
                       <Text fw={500}>Settings</Text>
+                    </Link>
+                    <Link to="/test">
+                      <Text fw={500}>Test Components</Text>
                     </Link>
                   </Group>
                 </Group>
@@ -60,6 +58,7 @@ const App: React.FC = () => {
               <Route path="/" element={<Landing />} />
               <Route path="/book" element={<Book />} />
               <Route path="/config" element={<Config />} />
+              <Route path="/test" element={<ComponentLoaderTest />} />
             </Routes>
           </AppShell.Main>
         </AppShell>
