@@ -12,7 +12,6 @@
     "test": "jest"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^0.0.72",
     "@mantine/core": "^7.14.0",
     "@mantine/form": "^7.14.0",
     "@mantine/notifications": "^7.14.0",
@@ -36,7 +35,6 @@
     "@testing-library/react": "^16.0.1",
     "@types/jest": "^29.5.14",
     "@types/multer": "^1.4.12",
-    "canvas": "^2.11.2",
     "concurrently": "^9.1.0",
     "css-loader": "^7.1.2",
     "html-webpack-plugin": "^5.6.3",
