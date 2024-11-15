@@ -4,7 +4,7 @@
   "description": "React TypeScript application with live Babel compilation",
   "main": "src/server.ts",
   "scripts": {
-    "dev:server": "tsx src/server.ts",
+    "dev:server": "tsx --watch src/server.ts",
     "dev:client": "webpack serve --mode development",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "build": "npm run build:server && npm run build:client",

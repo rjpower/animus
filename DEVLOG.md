@@ -1,6 +1,34 @@
 # Animus Devlog
 
-## 2024-11-14 1600
+## 2024-11-15
+
+With a little bit more prompt tweaking, and using Sonnet -- we're looking pretty
+good! The page that comes back from Sonnet cleanly loads the validation results,
+shows a spinner, and even shows incorrect responses inline! I think it's pretty
+close to being shareable, but needs a few updates:
+
+Okay, I think it's good enough to deploy. Not perfect, but at least fun to play
+with.
+
+Let's:
+
+* Clean up docker
+* Push to my server
+* Open up the github repo.
+
+### Configuration should let users provide their API keys, disable API usage on my key except for demo links
+
+So the demo pages will be hard-coded to use my key or just the cache, but let's
+allow users to configure their own key to try out different images?  Or just
+release it and hope for the best...
+
+### Better landing page
+
+I had Claude generate the current one, but we can do better.
+
+### About page and github links
+
+## 2024-11-14
 
 I switched to a separate createRoot, but this... doesn't work well. I don't
 think React really enjoys nesting createRoot inside of another react tree (with
@@ -15,7 +43,14 @@ This is easy to turn-on for now, though I suspect iframes will be the way to go
 longer term. It's just a bit of a pain to setup the environment for them so I
 want to delay that for now.
 
-## 2024-11-14 1400
+I'd also like to show a source view on the form/verification rendering, or some
+kind of chat or debug console, so people can see what's happening behind the
+scenes.
+
+Bonus would be to switch to the streaming API but I don't want to try to wire
+that through, especially after the proxy challenges I've had in the past.
+
+## 
 
 Not a lot of opportunity to work on this yesterday and limited time today, so
 let's try to use it well. As I recall I was thinking about how to improve the
@@ -31,7 +66,7 @@ _Form isolation_: Errors in the new form show up as errors in the application
 now. Is there an effective way to construct a sub-root for the LLM generated
 app? Or just use an iframe? What are the tradeoffs?
 
-## 2024-11-13 1200
+## 2024-11-13
 
 The react component works okay: I banged my head on getting the dynamic loading
 working far more than I'm happy with, but it seems to be going now: at least I
@@ -45,7 +80,7 @@ validation handle with the question & answer & textbook image, and then let it
 decide how it wants to render the result: I'm confident a larger LLM will handle
 this.
 
-## 2024-11-13 1000
+##
 
 Revisiting this while sober: what's the best workflow? It's difficult for the
 LLMs to construct a webform which exactly captures the original book workflow
@@ -71,7 +106,7 @@ Sonnet works fairly well and generates a nice-looking form as an artifact.
 I could wire this up to some logic for letting it call an LLM to verify the
 results.
 
-## 2024-11-12 2000
+## 2024-11-12
 
 I'm happy with the basic workflow after a few tweaks and cleanups. I created a
 simple hero image etc to spice up the page a bit, and asked Aider to cleanup the

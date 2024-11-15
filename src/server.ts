@@ -1,58 +1,34 @@
-import express, { NextFunction, Request, Response } from "express";
 import { Buffer } from "buffer";
+import crypto from "crypto";
+import express, { NextFunction, Request, Response } from "express";
 import fs from "fs";
 import multer from "multer";
 import path from "path";
 import sharp from "sharp";
-import { createLogger, LogLevels } from "./logging";
+import { createLogger } from "./logging";
 
 import {
-  AIModel,
-  FormGeneratorDefaults,
-  GenerateFormResponse,
-  ValidationRequest,
+  CheckAnswerWebRequest,
+  GenerateFormWebRequest,
+  GenerateFormWebResponse,
+  GenerationMode,
 } from "./common";
-import { generateFormFromImage, validateUserResponse } from "./generate";
+import {
+  CheckAnswerDefaults,
+  CheckAnswerRequest,
+  FormGeneratorDefaults,
+  generateFormFromImage,
+  GenerateFormRequest,
+  validateUserResponse,
+} from "./generate";
 
-function ensureLogDir(subDir: string): string {
-  const dir = path.join(__dirname, "../log", subDir);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
 
-function getTimestamp(): string {
-  const now = new Date();
-  const hours = now.getHours().toString().padStart(2, "0");
-  const minutes = now.getMinutes().toString().padStart(2, "0");
-  return `${now.toISOString().split("T")[0]}-${hours}-${minutes}`;
-}
-
-function saveScreenshot(buffer: Buffer, routeName: string): string {
-  const dir = ensureLogDir("screenshots");
-  const filename = `${routeName}-${getTimestamp()}.png`;
-  const filepath = path.join(dir, filename);
-  fs.writeFileSync(filepath, buffer);
-  return filepath;
-}
-
-function saveResponse(data: any, routeName: string): string {
-  const dir = ensureLogDir("responses");
-  const filename = `${routeName}-${getTimestamp()}.json`;
-  const filepath = path.join(dir, filename);
-  fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
-  return filepath;
-}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Logging middleware
 const logger = createLogger("server");
-
-// Request logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
   const start = Date.now();
   res.on("finish", () => {
@@ -64,57 +40,22 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Error logging middleware
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  logger.error("Unhandled error:", err);
-  res.status(500).json({ error: "Internal server error" });
-});
-
-// Regular middleware
 app.use(express.json({ limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "../dist")));
 
-// API endpoints
-async function processImageAndGenerateForm(
-  imageBuffer: Buffer,
-  mimeType: string,
-  model: string,
-  systemPrompt: string,
-  userPrompt: string,
-  routeName: string
-): Promise<GenerateFormResponse> {
-  const responseDir = ensureLogDir("responses");
-  const files = fs
-    .readdirSync(responseDir)
-    .filter((file) => file.startsWith(`${routeName}-`))
-    .sort()
-    .reverse();
-
-  logger.debug(files);
-
-  if (files.length > 0) {
-    const latestFile = path.join(responseDir, files[0]);
-    const previousResponse = JSON.parse(fs.readFileSync(latestFile, "utf-8"));
-    // log keys to console
-    logger.debug(Object.keys(previousResponse));
-    if (previousResponse) {
-      return previousResponse;
-    }
-  }
-
-  const imageData = {
-    base64: imageBuffer.toString("base64"),
-    mimeType,
-  };
-
+async function generateForm({
+  imageData,
+  modelConfig,
+  generationMode,
+}: GenerateFormRequest): Promise<GenerateFormWebResponse> {
   const formResponse = await generateFormFromImage({
     imageData,
-    model,
-    systemPrompt,
-    userPrompt,
+    modelConfig,
+    generationMode,
   });
 
   // Generate thumbnail
+  const imageBuffer = Buffer.from(imageData.base64, "base64");
   const thumbnail = await sharp(imageBuffer)
     .resize(600, 600, {
       fit: "inside",
@@ -128,30 +69,46 @@ async function processImageAndGenerateForm(
     thumbnail: `data:image/jpeg;base64,${thumbnail.toString("base64")}`,
   };
 
-  saveResponse(response, routeName);
   return response;
 }
 
 app.post(
   "/api/design",
   upload.single("image"),
-  async (req: Request & { file?: Express.Multer.File }, res, next) => {
+  async (
+    req: Request & { file?: Express.Multer.File },
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
       if (!req.file) {
         res.status(400).json({ error: "No image file provided" });
         return;
       }
 
-      saveScreenshot(req.file.buffer, "design");
+      if (!req.body.modelConfig) {
+        res.status(400).json({ error: "No modelConfig provided" });
+        return;
+      }
 
-      const response = await processImageAndGenerateForm(
-        req.file.buffer,
-        req.file.mimetype,
-        req.body.model || FormGeneratorDefaults.model,
-        req.body.systemPrompt || FormGeneratorDefaults.systemPrompt,
-        req.body.userPrompt || FormGeneratorDefaults.userPrompt,
-        "design"
-      );
+      const modelConfig = JSON.parse(req.body.modelConfig);
+
+      const request: GenerateFormRequest = {
+        imageData: {
+          base64: req.file.buffer.toString("base64"),
+          mimeType: req.file.mimetype,
+        },
+        modelConfig,
+        generationMode: req.body.generationMode as GenerationMode,
+      };
+
+      if (!request.generationMode) {
+        res.status(400).json({ error: "No generationMode provided" });
+        return;
+      }
+
+      const response = await generateForm(request);
+
       res.json(response);
     } catch (error) {
       next(error);
@@ -165,18 +122,30 @@ app.get("/api/demo/:imageName", async (req, res, next) => {
     "../static/demo",
     req.params.imageName
   );
+
   try {
     const imageBuffer = fs.readFileSync(imagePath);
+    const metadata = await sharp(imageBuffer).metadata();
+    const generationMode =
+      (req.query.generationMode as GenerationMode) || GenerationMode.REPLICATE;
 
-    const response = await processImageAndGenerateForm(
-      imageBuffer,
-      "image/jpeg",
-      FormGeneratorDefaults.model,
-      FormGeneratorDefaults.systemPrompt,
-      FormGeneratorDefaults.userPrompt,
-      "demo"
-    );
+    const request = {
+      imageData: {
+        base64: imageBuffer.toString("base64"),
+        mimeType: metadata.format === "png" ? "image/png" : "image/jpeg",
+      },
+      modelConfig: {
+        model: FormGeneratorDefaults.model,
+        apiKeys: {
+          openai: process.env.OPENAI_API_KEY,
+          anthropic: process.env.ANTHROPIC_API_KEY,
+          gemini: process.env.GEMINI_API_KEY,
+        },
+      },
+      generationMode: generationMode,
+    } as GenerateFormRequest;
 
+    const response = await generateForm(request);
     res.json(response);
   } catch (error) {
     next(error);
@@ -185,19 +154,37 @@ app.get("/api/demo/:imageName", async (req, res, next) => {
 
 app.post("/api/validate", async (req, res, next) => {
   try {
-    const validationRequest = req.body as ValidationRequest;
+    const webRequest = req.body as CheckAnswerWebRequest;
+    const validationRequest: CheckAnswerRequest = {
+      ...webRequest,
+      modelConfig: {
+        model: webRequest.modelConfig?.model || CheckAnswerDefaults.model,
+        apiKeys: {
+          openai:
+            webRequest.modelConfig?.apiKeys.openai ||
+            process.env.OPENAI_API_KEY,
+          anthropic:
+            webRequest.modelConfig?.apiKeys.anthropic ||
+            process.env.ANTHROPIC_API_KEY,
+          gemini:
+            webRequest.modelConfig?.apiKeys.gemini ||
+            process.env.GEMINI_API_KEY,
+        },
+      },
+    };
 
-    if (validationRequest.screenshot) {
-      const imageBuffer = Buffer.from(validationRequest.screenshot!, "base64");
-      saveScreenshot(imageBuffer, "validate");
-    }
+    console.log("validationRequest", validationRequest);
 
     const validation = await validateUserResponse(validationRequest);
-    saveResponse(validation, "validate");
     res.json(validation);
   } catch (error) {
     next(error);
   }
+});
+
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  logger.trace(err);
+  res.status(500).json({ error: "Internal server error" });
 });
 
 // Serve static files
@@ -208,7 +195,6 @@ app.use("/", express.static(path.join(__dirname, "../dist/client")));
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../dist/client/index.html"));
 });
-
 app.listen(PORT, () => {
   logger.info(`Server running at http://localhost:${PORT}`);
 });

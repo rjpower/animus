@@ -1,3 +1,10 @@
+// Parses a component definition created by an LLM and returns a React
+// component.  This handles transforming import & export statements into
+// something that can be evaluated in a runtime context. We export all React &
+// Mantine components as well as any user specified context.
+//
+// There's probably a much better way to do this, but... this works for now.
+
 import { Parser } from "acorn";
 import jsx from "acorn-jsx";
 import * as walk from "acorn-walk";
@@ -7,7 +14,9 @@ import type { ComponentType } from "react";
 import * as Mantine from "@mantine/core";
 import { createLogger } from "./logging";
 
-// Define allowed module registries
+const logger = createLogger("ComponentLoader");
+
+// Define allowed module imports
 const registries = {
   "@mantine/core": Mantine,
   react: {
@@ -21,21 +30,7 @@ const registries = {
   },
 } as const;
 
-const logger = createLogger("ComponentLoader");
-
 const JSXParser = Parser.extend(jsx());
-
-interface ImportSpecifier {
-  type: string;
-  local: { name: string };
-  imported?: { name: string };
-}
-
-interface ImportDeclaration {
-  type: "ImportDeclaration";
-  specifiers: ImportSpecifier[];
-  source: { value: string };
-}
 
 export function compileComponent({
   code,
@@ -50,13 +45,13 @@ export function compileComponent({
       return () => null;
     }
 
+    // Convert JSX to React.createElement
     const { code: transformedCode } = transform(code, {
       transforms: ["jsx", "imports"],
       jsxRuntime: "classic",
       production: true,
     });
 
-    // Parse the transformed code
     const ast = JSXParser.parse(transformedCode, {
       sourceType: "module",
       ecmaVersion: "latest",
@@ -79,7 +74,7 @@ export function compileComponent({
       },
     });
 
-    // Clean the transformed code
+    // Strip imports and outputs from the transformed code
     const cleanCode = transformedCode
       .replace(/import.*from.*;\n/g, "")
       .replace(/export\s+(function|const|let|var|class)/g, "$1");

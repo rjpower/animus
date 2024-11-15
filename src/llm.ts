@@ -1,9 +1,9 @@
-import type { AIModel } from "./common";
+// Mediocre LLM abstraction for OpenAI, Gemini, and Anthropic APIs
+
 import { createLogger } from "./logging";
 
 const logger = createLogger("llm");
 
-// Types and Interfaces
 export type MessageType = "system" | "user" | "assistant";
 
 interface ImageContent {
@@ -17,13 +17,23 @@ export interface Message {
   image: ImageContent | null;
 }
 
-interface ApiConfig {
+interface ApiKeys {
+  openai?: string;
+  gemini?: string;
+  anthropic?: string;
+}
+
+export interface LLMConfig {
+  model: AIModel;
+  apiKeys: ApiKeys;
+}
+
+interface BackendConfig {
+  model: string;
   baseUrl: string;
-  apiKey: string;
   headers: Record<string, string>;
 }
 
-// Utility Functions
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -61,18 +71,112 @@ async function handleApiError(
   throw new ApiError(errorMessage, response.status);
 }
 
-// Base LLM Client
-abstract class BaseLLMClient {
-  protected constructor(
-    protected readonly model: string,
-    protected readonly config: ApiConfig
-  ) {
-    if (!config.apiKey) {
-      throw new Error(
-        `API key not found for ${this.constructor.name} model: ${model}`
-      );
-    }
+function logUsage(usageData: any, model: string): void {
+  if (!usageData) return;
+  logger.info(`API usage`, {
+    model,
+    ...usageData,
+  });
+}
+
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import { AIModel } from "./common";
+
+type CacheEntry = {
+  timestamp: string;
+  request: {
+    messages: Message[];
+    jsonMode: boolean;
+    jsonSchema?: object;
+    model: string;
+  };
+  response: any;
+};
+
+export class LLMCache {
+  private readonly cacheDir: string;
+  private readonly imageCacheDir: string;
+
+  constructor(baseDir: string = "./cache/llm") {
+    this.cacheDir = path.resolve(baseDir);
+    this.imageCacheDir = path.join(this.cacheDir, "images");
+    fs.mkdirSync(this.imageCacheDir, { recursive: true });
   }
+
+  private generateHash(data: unknown): string {
+    return crypto
+      .createHash("sha256")
+      .update(JSON.stringify(data))
+      .digest("hex");
+  }
+
+  async get(
+    model: string,
+    messages: Message[],
+    jsonMode: boolean,
+    jsonSchema?: object
+  ): Promise<any | null> {
+    const hash = this.generateHash({ model, messages, jsonMode, jsonSchema });
+    const cachePath = path.join(this.cacheDir, `${hash}.json`);
+
+    if (!fs.existsSync(cachePath)) return null;
+    const cacheEntry: CacheEntry = JSON.parse(
+      await fs.promises.readFile(cachePath, "utf-8")
+    );
+    return cacheEntry.response;
+  }
+
+  async set(
+    model: string,
+    messages: Message[],
+    jsonMode: boolean,
+    jsonSchema: object | undefined,
+    response: any
+  ): Promise<void> {
+    const hash = this.generateHash({ model, messages, jsonMode, jsonSchema });
+
+    const processedMessages = await Promise.all(
+      messages.map(async (msg, index) => {
+        if (!msg.image) return msg;
+
+        const ext = msg.image.mimeType.split("/")[1] || "bin";
+        const imagePath = path.join(
+          this.imageCacheDir,
+          `${hash}_${index}.${ext}`
+        );
+
+        await fs.promises.writeFile(
+          imagePath,
+          Buffer.from(msg.image.base64, "base64")
+        );
+
+        return {
+          ...msg,
+          image: {
+            ...msg.image,
+            base64: path.relative(this.cacheDir, imagePath),
+          },
+        };
+      })
+    );
+
+    const cacheEntry: CacheEntry = {
+      timestamp: new Date().toISOString(),
+      request: { model, messages: processedMessages, jsonMode, jsonSchema },
+      response,
+    };
+
+    await fs.promises.writeFile(
+      path.join(this.cacheDir, `${hash}.json`),
+      JSON.stringify(cacheEntry, null, 2)
+    );
+  }
+}
+
+abstract class BaseLLMClient {
+  protected constructor(protected readonly config: BackendConfig) {}
 
   protected abstract formatMessages(
     messages: Message[],
@@ -82,22 +186,13 @@ abstract class BaseLLMClient {
 
   protected abstract extractContent(response: any): string;
 
-  protected async makeApiRequest(body: any): Promise<Response> {
+  async makeApiRequest(body: any): Promise<Response> {
     return fetch(this.config.baseUrl, {
       method: "POST",
       headers: {
         ...this.config.headers,
-        Authorization: `Bearer ${this.config.apiKey}`,
       },
       body: JSON.stringify(body),
-    });
-  }
-
-  protected logUsage(usageData: any, model: string): void {
-    if (!usageData) return;
-    logger.info(`${this.constructor.name} API usage`, {
-      model,
-      ...usageData,
     });
   }
 
@@ -124,7 +219,7 @@ abstract class BaseLLMClient {
       );
     }
 
-    this.logUsage(result.usage || result.usageMetadata, this.model);
+    logUsage(result.usage || result.usageMetadata, this.config.model);
 
     if (jsonMode) {
       try {
@@ -139,11 +234,18 @@ abstract class BaseLLMClient {
 }
 
 export class OpenAIClient extends BaseLLMClient {
-  constructor(model: string) {
-    super(model, {
+  constructor(config: LLMConfig) {
+    const apiKey = config.apiKeys.openai || process.env["OPENAI_API_KEY"]!;
+    if (!apiKey) {
+      throw new Error("OpenAI API key not found");
+    }
+    super({
+      model: config.model,
       baseUrl: "https://api.openai.com/v1/chat/completions",
-      apiKey: process.env["OPENAI_API_KEY"]!,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
     });
   }
 
@@ -176,9 +278,8 @@ export class OpenAIClient extends BaseLLMClient {
     });
 
     const body: any = {
-      model: this.model,
+      model: this.config.model,
       messages: formattedMessages,
-      temperature: 0,
     };
 
     if (jsonMode) {
@@ -210,10 +311,14 @@ export class OpenAIClient extends BaseLLMClient {
 }
 
 export class GeminiClient extends BaseLLMClient {
-  constructor(model: string) {
-    super(model, {
-      baseUrl: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env["GEMINI_API_KEY"]}`,
-      apiKey: process.env["GEMINI_API_KEY"]!,
+  constructor(config: LLMConfig) {
+    const apiKey = config.apiKeys.gemini || process.env["GEMINI_API_KEY"]!;
+    if (!apiKey) {
+      throw new Error("Gemini API key not found");
+    }
+    super({
+      model: config.model,
+      baseUrl: `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${apiKey}`,
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -259,8 +364,8 @@ export class GeminiClient extends BaseLLMClient {
       },
       contents: contents.length === 1 ? contents[0] : contents,
       generationConfig: jsonMode
-        ? undefined
-        : { response_mime_type: "application/json" },
+        ? { response_mime_type: "application/json" }
+        : undefined,
     };
 
     return body;
@@ -272,14 +377,19 @@ export class GeminiClient extends BaseLLMClient {
 }
 
 export class AnthropicClient extends BaseLLMClient {
-  constructor(model: string) {
-    super(model, {
+  constructor(config: LLMConfig) {
+    const apiKey =
+      config.apiKeys.anthropic || process.env["ANTHROPIC_API_KEY"]!;
+    if (!apiKey) {
+      throw new Error("Anthropic API key not found");
+    }
+    super({
+      model: config.model,
       baseUrl: "https://api.anthropic.com/v1/messages",
-      apiKey: process.env["ANTHROPIC_API_KEY"]!,
       headers: {
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01",
-        "x-api-key": process.env["ANTHROPIC_API_KEY"]!,
+        "x-api-key": apiKey,
       },
     });
   }
@@ -319,7 +429,7 @@ export class AnthropicClient extends BaseLLMClient {
     }
 
     return {
-      model: this.model,
+      model: this.config.model,
       messages: formattedMessages,
       max_tokens: 4096,
       ...(systemPrompt && { system: systemPrompt }),
@@ -331,21 +441,47 @@ export class AnthropicClient extends BaseLLMClient {
   }
 }
 
+const cache = new LLMCache();
+
 export class LLMQuery {
   private messages: Message[] = [];
   private jsonMode = false;
   private jsonSchema?: object;
   private client: BaseLLMClient;
+  private model: AIModel;
 
-  constructor(model: AIModel) {
-    this.client = this.createClient(model);
-  }
+  constructor(config: LLMConfig) {
+    this.model = config.model;
+    const modelType = this.model.split("-")[0];
+    const provider: string = (() => {
+      if (modelType === "gpt") {
+        return "openai";
+      } else if (modelType === "gemini") {
+        return "gemini";
+      } else if (modelType === "claude") {
+        return "anthropic";
+      }
+      return "";
+    })();
 
-  private createClient(model: AIModel): BaseLLMClient {
-    if (model.startsWith("gpt-")) return new OpenAIClient(model);
-    if (model.startsWith("gemini-")) return new GeminiClient(model);
-    if (model.startsWith("claude-")) return new AnthropicClient(model);
-    throw new Error(`Unsupported model: ${model}`);
+    if (
+      !(provider in config.apiKeys) ||
+      !config.apiKeys[provider as keyof ApiKeys]
+    ) {
+      throw new Error(
+        `API key not found for ${this.constructor.name} model type: ${modelType} (provider: ${provider})`
+      );
+    }
+
+    if (modelType === "gpt") {
+      this.client = new OpenAIClient(config);
+    } else if (modelType === "gemini") {
+      this.client = new GeminiClient(config);
+    } else if (modelType === "claude") {
+      this.client = new AnthropicClient(config);
+    } else {
+      throw new Error(`Unsupported model: ${this.model}`);
+    }
   }
 
   system(prompt: string): this {
@@ -374,16 +510,38 @@ export class LLMQuery {
   }
 
   async execute(maxAttempts = 5): Promise<any> {
+    const cachedResponse = await cache.get(
+      this.model,
+      this.messages,
+      this.jsonMode,
+      this.jsonSchema
+    );
+
+    if (cachedResponse) {
+      logger.info("Using cached response");
+      return cachedResponse;
+    }
+
     let attempt = 0;
     let lastError: Error | null = null;
 
     while (true) {
       try {
-        return await this.client.complete(
+        const response = await this.client.complete(
           this.messages,
           this.jsonMode,
           this.jsonSchema
         );
+
+        await cache.set(
+          this.model,
+          this.messages,
+          this.jsonMode,
+          this.jsonSchema,
+          response
+        );
+
+        return response;
       } catch (error) {
         if (!(error instanceof Error)) throw error;
 

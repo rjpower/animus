@@ -20,6 +20,12 @@ module.exports = {
         context: ["/api", "/static"],
         target: "http://localhost:3000",
         secure: false,
+        changeOrigin: true,
+        onProxyRes: (proxyRes) => {
+          proxyRes.headers["Cache-Control"] =
+            "no-cache, no-store, must-revalidate";
+          proxyRes.headers["Expires"] = "0";
+        },
       },
     ],
   },

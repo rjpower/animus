@@ -1,27 +1,46 @@
-import { Alert, MantineProvider, Paper } from "@mantine/core";
+import { Alert, Group, MantineProvider, Paper } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as ReactDOM from "react-dom/client";
-import type { ValidationRequest, ValidationResponse } from "./common";
+import {
+  AIModel,
+  CheckAnswerWebRequest,
+  CheckAnswerWebResponse,
+} from "./common";
 import { compileComponent } from "./component-loader";
 import { createLogger } from "./logging";
-
-import * as styles from "./styles.module.css";
 
 const logger = createLogger("DynamicForm");
 
 export async function checkUserAnswers(
-  request: ValidationRequest
-): Promise<ValidationResponse> {
-  const response = await fetch("/api/validate", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  request: CheckAnswerWebRequest
+): Promise<CheckAnswerWebResponse> {
+  const modelConfig = {
+    model: localStorage.getItem("validationModel") || "",
+    apiKeys: {
+      openai: localStorage.getItem("openai_api_key") || "",
+      anthropic: localStorage.getItem("anthropic_api_key") || "",
+      gemini: localStorage.getItem("gemini_api_key") || "",
     },
-    body: JSON.stringify(request),
-  });
+  };
 
-  return (await response.json()) as ValidationResponse;
+  try {
+    const response = await fetch("/api/validate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ...request, modelConfig }),
+    });
+    return (await response.json()) as CheckAnswerWebResponse;
+  } catch (error) {
+    notifications.show({
+      title: "Error",
+      message: `Failed to validate answer: ${error}`,
+      color: "red",
+    });
+    throw error;
+  }
 }
 
 interface UserCodeErrorBoundaryState {
@@ -43,19 +62,20 @@ class UserCodeErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: any, info: any) {
-    logger.error(error, info);
+    logger.error("Caught error in LLM code.", error, info);
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <Alert variant="destructive" className="my-2">
+        <Group>
           <strong>User Component Error</strong>
           <div className="text-sm">
-            {this.state.error?.message ||
-              "An error occurred when rendering the dynamic component."}
+            An error occurred when rendering the dynamic component.
+            <br />
+            {this.state.error?.toString()}
           </div>
-        </Alert>
+        </Group>
       );
     }
     return this.props.children;
@@ -67,50 +87,82 @@ interface DynamicFormProps {
   onValidate?: (element: HTMLElement) => void;
 }
 
-export const DynamicForm: React.FC<DynamicFormProps> = ({
-  code,
-  onValidate,
-}) => {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLDivElement>(null);
+export const DynamicForm: React.FC<DynamicFormProps> = ({ code }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [root, setRoot] = useState<ReactDOM.Root | null>(null);
+  const [error, setError] = useState<Error | null>(null);
 
+  // Create root only once when container is available
   useEffect(() => {
-    if (!rootRef.current) return;
-
-    try {
-      const CompiledComponent = compileComponent({
-        code,
-        userCtx: { checkUserAnswers },
-      });
-      const root = ReactDOM.createRoot(rootRef.current);
-      root.render(
-        <MantineProvider>
-          <Alert />
-          <UserCodeErrorBoundary>
-            <CompiledComponent />
-          </UserCodeErrorBoundary>
-        </MantineProvider>
-      );
-
-      return () => {
-        root.unmount();
-      };
-    } catch (error) {
-      console.trace(error);
-      notifications.show({
-        title: "Error",
-        message: "Failed to compile component",
-        color: "red",
-        autoClose: 5000,
-      });
+    if (containerRef.current && !root) {
+      const newRoot = ReactDOM.createRoot(containerRef.current);
+      setRoot(newRoot);
     }
-  }, [code]);
+  }, []);
+
+  // Handle component updates
+  useEffect(() => {
+    if (!root) return;
+
+    let isMounted = true;
+
+    const renderComponent = async () => {
+      try {
+        const CompiledComponent = compileComponent({
+          code,
+          userCtx: { checkUserAnswers },
+        });
+
+        if (isMounted) {
+          root.render(
+            <MantineProvider>
+              <UserCodeErrorBoundary>
+                <CompiledComponent />
+              </UserCodeErrorBoundary>
+            </MantineProvider>
+          );
+        }
+      } catch (err) {
+        console.error(err);
+        setError(
+          err instanceof Error ? err : new Error("Failed to compile component")
+        );
+        notifications.show({
+          title: "Error",
+          message: "Failed to compile component",
+          color: "red",
+          autoClose: 5000,
+        });
+      }
+    };
+
+    renderComponent();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [code, root]);
+
+  // Cleanup root on unmount
+  useEffect(() => {
+    return () => {
+      if (root) {
+        // Use a timeout to ensure any pending renders complete
+        setTimeout(() => {
+          root.unmount();
+        }, 0);
+      }
+    };
+  }, [root]);
 
   return (
     <Paper p="xl" style={{ flex: 1, overflow: "auto" }}>
-      <div ref={formRef} className={styles.dynamicForm}>
-        <div ref={rootRef} />
-      </div>
+      <div ref={containerRef} />
+      {error && (
+        <Alert color="red" title="Error">
+          {error.message}
+        </Alert>
+      )}
     </Paper>
   );
 };

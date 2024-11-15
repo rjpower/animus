@@ -1,25 +1,24 @@
-import React from "react";
-import { createRoot } from "react-dom/client";
-import { Link, Route, BrowserRouter as Router, Routes } from "react-router-dom";
-import "@mantine/core/styles.css";
 import {
   AppShell,
   Button,
   Container,
   Group,
+  Image,
   MantineProvider,
-  Title,
 } from "@mantine/core";
+import "@mantine/core/styles.css";
 import { Notifications } from "@mantine/notifications";
 import "@mantine/notifications/styles.css";
-import { Image } from "@mantine/core";
-import { Book } from "./Book";
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { Link, Route, BrowserRouter as Router, Routes } from "react-router-dom";
+import { About } from "./About";
 import { Config } from "./Config";
-import { Landing } from "./Landing";
+import { Design } from "./Design";
 
 const App: React.FC = () => {
   return (
-    <MantineProvider defaultColorScheme="dark">
+    <MantineProvider>
       <Notifications position="top-right" />
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppShell padding="md">
@@ -27,7 +26,7 @@ const App: React.FC = () => {
             <Container size="lg" h={60}>
               <Group h="100%" justify="space-between">
                 <Group>
-                  <Group>
+                  <Group ml="xl">
                     <Image
                       src="/static/navbar.jpg"
                       height={40}
@@ -35,16 +34,13 @@ const App: React.FC = () => {
                       radius="md"
                       alt="Animus Codex"
                     />
-                    <Title order={4}>Animus Codex</Title>
-                  </Group>
-                  <Group ml="xl">
                     <Button
                       component={Link}
-                      to="/book"
+                      to="/design"
                       variant="subtle"
                       color="gray"
                     >
-                      Book
+                      Design
                     </Button>
                     <Button
                       component={Link}
@@ -54,16 +50,43 @@ const App: React.FC = () => {
                     >
                       Settings
                     </Button>
+                    <Button
+                      component={Link}
+                      to="/about"
+                      variant="subtle"
+                      color="gray"
+                    >
+                      About
+                    </Button>
                   </Group>
                 </Group>
+                <Button
+                  component="a"
+                  href="https://github.com/rjpower/animus"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  variant="subtle"
+                  color="gray"
+                  leftSection={
+                    <Image
+                      src="/static/github-mark.svg"
+                      height={24}
+                      width={24}
+                      alt="GitHub"
+                    />
+                  }
+                >
+                  GitHub
+                </Button>
               </Group>
             </Container>
           </AppShell.Header>
           <AppShell.Main pt={60}>
             <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route path="/book" element={<Book />} />
+              <Route path="/" element={<About />} />
+              <Route path="/design" element={<Design />} />
               <Route path="/config" element={<Config />} />
+              <Route path="/about" element={<About />} />
             </Routes>
           </AppShell.Main>
         </AppShell>
