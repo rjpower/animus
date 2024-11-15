@@ -2,10 +2,8 @@
   "compilerOptions": {
     "target": "es2017",
     "lib": [
-      "dom",
-      "dom.iterable",
       "esnext",
-      "es2015"
+      "dom",
     ],
     "types": [
       "node"
@@ -27,13 +25,10 @@
       {
         "name": "typescript-plugin-css-modules"
       },
-      {
-        "transform": "typia/lib/transform"
-      }
     ],
   },
   "include": [
-    "src"
+    "src/**.ts"
   ],
   "ts-node": {
     "transpileOnly": false

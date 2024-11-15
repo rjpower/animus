@@ -1,6 +1,16 @@
 import React, { useState } from 'react';
-import { Container, Grid, Textarea, Paper, Button, Text, Alert } from '@mantine/core';
-import { compileComponent } from './component-loader';
+import * as ReactDOM from "react-dom/client";
+import {
+  Container,
+  Grid,
+  Textarea,
+  Paper,
+  Button,
+  Text,
+  Alert,
+  MantineProvider,
+} from "@mantine/core";
+import { compileComponent } from "./component-loader";
 
 const defaultCode = `
 import { Stack, Group, Badge, Paper, Text, Group, Button, Alert } from '@mantine/core';
@@ -9,8 +19,7 @@ import { useState } from 'react';
 function Component() {
   const [count, setCount] = useState(0);
   
-  return (
-    <Paper p="md" withBorder>
+  return (    <Paper p="md" withBorder>
       <Stack>
         <Text size="xl">Component Demo</Text>
         <Group>
@@ -33,13 +42,26 @@ export default Component;
 export const ComponentLoaderTest: React.FC = () => {
   const [code, setCode] = useState(defaultCode);
   const [error, setError] = useState<string | null>(null);
-  const [CompiledComponent, setCompiledComponent] =
-    useState<React.ComponentType | null>(null);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const rootRef = React.useRef<any>(null);
 
   const handleCompile = () => {
     try {
-      const component = compileComponent(code);
-      setCompiledComponent(() => component);
+      const component = compileComponent({ code, userCtx: {} });
+
+      // Cleanup previous render
+      if (rootRef.current) {
+        rootRef.current.unmount();
+      }
+
+      // Create new root and render
+      if (containerRef.current) {
+        rootRef.current = ReactDOM.createRoot(containerRef.current);
+        rootRef.current.render(
+          <MantineProvider>{React.createElement(component)}</MantineProvider>
+        );
+      }
+
       setError(null);
     } catch (err) {
       console.log(err);
@@ -49,9 +71,23 @@ export const ComponentLoaderTest: React.FC = () => {
       } else {
         setError(`An error occurred while compiling the component: ${err}`);
       }
-      setCompiledComponent(null);
+
+      // Cleanup on error
+      if (rootRef.current) {
+        rootRef.current.unmount();
+        rootRef.current = null;
+      }
     }
   };
+
+  React.useEffect(() => {
+    return () => {
+      // Cleanup on unmount
+      if (rootRef.current) {
+        rootRef.current.unmount();
+      }
+    };
+  }, []);
 
   return (
     <Container size="xl">
@@ -83,10 +119,10 @@ export const ComponentLoaderTest: React.FC = () => {
               <Alert color="red" title="Compilation Error">
                 {error}
               </Alert>
-            ) : CompiledComponent ? (
-              <CompiledComponent />
             ) : (
-              <Text c="dimmed">Compiled component will appear here</Text>
+              <div ref={containerRef}>
+                <Text c="dimmed">Compiled component will appear here</Text>
+              </div>
             )}
           </Paper>
         </Grid.Col>

@@ -5,6 +5,7 @@ import { transform } from "sucrase";
 import * as React from "react";
 import type { ComponentType } from "react";
 import * as Mantine from "@mantine/core";
+import { createLogger } from "./logging";
 
 // Define allowed module registries
 const registries = {
@@ -20,6 +21,8 @@ const registries = {
   },
 } as const;
 
+const logger = createLogger("ComponentLoader");
+
 const JSXParser = Parser.extend(jsx());
 
 interface ImportSpecifier {
@@ -34,85 +37,97 @@ interface ImportDeclaration {
   source: { value: string };
 }
 
-function isImportDeclaration(node: any): node is ImportDeclaration {
-  return node.type === "ImportDeclaration";
-}
-
-export function compileComponent(code: string): ComponentType<any> {
-  console.log(code);
-  if (code === "") {
-    return () => null;
-  }
-
-  const { code: transformedCode } = transform(code, {
-    transforms: ["jsx", "imports"],
-    jsxRuntime: "classic",
-    production: true,
-  });
-
-  // Parse the transformed code
-  const ast = JSXParser.parse(transformedCode, {
-    sourceType: "module",
-    ecmaVersion: "latest",
-  });
-
-  // Track imports by module
-  const moduleImports = new Map<string, Set<string>>();
-
-  // Walk the AST to gather imports
-  walk.simple(ast as any, {
-    ImportDeclaration(node: any) {
-      const source = node.source.value;
-      if (!registries[source as keyof typeof registries]) {
-        console.warn(`Skipping import from unauthorized module: ${source}`);
-        return;
-      }
-      if (!moduleImports.has(source)) {
-        moduleImports.set(source, new Set());
-      }
-      node.specifiers.forEach((spec: any) => {
-        const name = spec.local.name;
-        moduleImports.get(source)!.add(name);
-      });
-    },
-  });
-
-  // Clean the transformed code
-  const cleanCode = transformedCode
-    .replace(/import.*from.*;\n/g, "")
-    .replace(/export\s+(function|const|let|var|class)/g, "$1");
-
-  // Build the scope declarations
-  const scopeDeclarations = Array.from(moduleImports.entries())
-    .map(([module, imports]) => {
-      const alias = module === "@mantine/core" ? "Mantine" : module;
-      return `const { ${Array.from(imports).join(", ")} } = ${alias};`;
-    })
-    .join("\n");
-
-  // Create the wrapped code with proper scope and exports handling
-  const wrappedCode = `
-    ${scopeDeclarations}
-    const exports = {};
-    const _jsx = React.createElement;
-    
-    ${cleanCode}
-    
-    if (!exports.default) {
-      throw new Error('No default export found in component');
+export function compileComponent({
+  code,
+  userCtx,
+}: {
+  code: string;
+  userCtx: object;
+}): ComponentType<any> {
+  try {
+    logger.debug(code);
+    if (code === "") {
+      return () => null;
     }
-    return exports.default;
-  `;
 
-  console.log(wrappedCode);
+    const { code: transformedCode } = transform(code, {
+      transforms: ["jsx", "imports"],
+      jsxRuntime: "classic",
+      production: true,
+    });
 
-  const factory = new Function("require", "React", wrappedCode);
-  const require = (module: string) => {
-    return registries[module as keyof typeof registries];
-  };
-  return factory(require, React);
-}
+    // Parse the transformed code
+    const ast = JSXParser.parse(transformedCode, {
+      sourceType: "module",
+      ecmaVersion: "latest",
+    });
 
-export function useCompiledComponent(code: string) {
-  return React.useMemo(() => compileComponent(code), [code]);
+    // Track imports by module
+    const moduleImports = new Map<string, Set<string>>();
+
+    // Walk the AST to gather imports
+    walk.simple(ast as any, {
+      ImportDeclaration(node: any) {
+        const source = node.source.value;
+        if (!moduleImports.has(source)) {
+          moduleImports.set(source, new Set());
+        }
+        for (const spec of node.specifiers) {
+          const name = spec.local.name;
+          moduleImports.get(source)!.add(name);
+        }
+      },
+    });
+
+    // Clean the transformed code
+    const cleanCode = transformedCode
+      .replace(/import.*from.*;\n/g, "")
+      .replace(/export\s+(function|const|let|var|class)/g, "$1");
+
+    // Build the scope declarations
+    const scopeDeclarations = Array.from(moduleImports.entries())
+      .map(([module, imports]) => {
+        const alias = module === "@mantine/core" ? "Mantine" : module;
+        return `const { ${Array.from(imports).join(", ")} } = ${alias};`;
+      })
+      .join("\n");
+
+    // Create the wrapped code with proper scope and exports handling
+    const wrappedCode = `
+      ${scopeDeclarations}
+      const exports = {};
+      const _jsx = React.createElement;
+      
+      ${cleanCode}
+      
+      if (exports.default) {
+        return exports.default;
+      }
+      
+      const exportKeys = Object.keys(exports);
+      if (exportKeys.length === 0) {
+        throw new Error('No exports found in component');
+      }
+      if (exportKeys.length === 1) {
+        return exports[exportKeys[0]];
+      }
+      throw new Error('Multiple exports found: ' + exportKeys.join(', '));
+    `;
+
+    logger.debug(wrappedCode);
+
+    const require = (module: string) => {
+      return registries[module as keyof typeof registries];
+    };
+
+    const ctx = { React, require, ...userCtx };
+    const ctxKeys = Object.keys(ctx);
+    const ctxValues = Object.values(ctx);
+    const factory = new Function(...ctxKeys, wrappedCode);
+    return factory(...ctxValues);
+  } catch (error) {
+    logger.error("Input code:", code);
+    logger.error("Exception trace:", error);
+    throw error;
+  }
 }

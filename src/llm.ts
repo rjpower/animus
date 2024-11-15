@@ -1,112 +1,183 @@
 import type { AIModel } from "./common";
-import winston from "winston";
+import { createLogger } from "./logging";
 
-const logger = winston.createLogger({
-  transports: [
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.json(),
-      ),
-    }),
-  ],
-});
+const logger = createLogger("llm");
 
-// Utility function for exponential backoff with jitter
-async function exponentialBackoff(
-  attempt: number,
-  maxAttempts: number,
-): Promise<boolean> {
-  if (attempt >= maxAttempts) {
-    return false;
-  }
-  const baseDelay = 1000;
-  const maxDelay = 64 * 1000;
-  const delay = Math.min(baseDelay * 2 ** attempt, maxDelay);
-  const jitter = delay * 0.1 * Math.random(); // 10% jitter
-  await new Promise((resolve) => setTimeout(resolve, delay + jitter));
-  return true;
-}
-
-async function handleApiError(
-  response: Response,
-  context = "",
-): Promise<never> {
-  const error = await response.text();
-  const contextStr = context ? ` for ${context}` : "";
-  const errorMessage = `API error${contextStr.slice(0, 1000)} (${response.status}): ${error.slice(0, 1000)}`;
-  class ApiError extends Error {
-    constructor(
-      message: string,
-      public status: number,
-    ) {
-      super(message);
-      this.name = "ApiError";
-    }
-  }
-
-  const err = new ApiError(errorMessage, response.status);
-  throw err;
-}
-
+// Types and Interfaces
 export type MessageType = "system" | "user" | "assistant";
+
+interface ImageContent {
+  mimeType: string;
+  base64: string;
+}
 
 export interface Message {
   role: MessageType;
   text: string | null;
-  image: { base64: string; mimeType: string } | null;
+  image: ImageContent | null;
 }
 
-export class OpenAIClient {
-  constructor(
-    private model: string,
-    private baseUrl = "https://api.openai.com/v1/chat/completions",
-  ) {}
+interface ApiConfig {
+  baseUrl: string;
+  apiKey: string;
+  headers: Record<string, string>;
+}
 
-  private formatMessages(messages: Message[]) {
-    return messages.map((msg) => {
-      if (msg.role === "system") {
-        return {
-          role: "system",
-          content: msg.text,
-        };
-      }
+// Utility Functions
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-      // Handle user messages with potential images
-      if (msg.role === "user") {
-        if (msg.image) {
-          return {
-            role: "user",
-            content: [
-              ...(msg.text ? [{ type: "text", text: msg.text }] : []),
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${msg.image.mimeType};base64,${msg.image.base64}`,
-                },
-              },
-            ],
-          };
-        }
+async function exponentialBackoff(
+  attempt: number,
+  maxAttempts: number
+): Promise<boolean> {
+  if (attempt >= maxAttempts) return false;
 
-        return {
-          role: "user",
-          content: msg.text,
-        };
-      }
+  const baseDelay = 1000;
+  const maxDelay = 64 * 1000;
+  const delay = Math.min(baseDelay * 2 ** attempt, maxDelay);
+  const jitter = delay * 0.1 * Math.random();
+  await sleep(delay + jitter);
+  return true;
+}
 
-      // Handle assistant messages
-      return {
-        role: "assistant",
-        content: msg.text,
-      };
+class ApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function handleApiError(
+  response: Response,
+  context = ""
+): Promise<never> {
+  const error = await response.text();
+  const contextStr = context ? ` for ${context}` : "";
+  const errorMessage = `API error${contextStr.slice(0, 1000)} (${
+    response.status
+  }): ${error.slice(0, 1000)}`;
+  throw new ApiError(errorMessage, response.status);
+}
+
+// Base LLM Client
+abstract class BaseLLMClient {
+  protected constructor(
+    protected readonly model: string,
+    protected readonly config: ApiConfig
+  ) {
+    if (!config.apiKey) {
+      throw new Error(
+        `API key not found for ${this.constructor.name} model: ${model}`
+      );
+    }
+  }
+
+  protected abstract formatMessages(
+    messages: Message[],
+    jsonMode: boolean,
+    jsonSchema?: object
+  ): any;
+
+  protected abstract extractContent(response: any): string;
+
+  protected async makeApiRequest(body: any): Promise<Response> {
+    return fetch(this.config.baseUrl, {
+      method: "POST",
+      headers: {
+        ...this.config.headers,
+        Authorization: `Bearer ${this.config.apiKey}`,
+      },
+      body: JSON.stringify(body),
     });
   }
 
-  async complete(messages: Message[], jsonMode = false, jsonSchema?: object) {
+  protected logUsage(usageData: any, model: string): void {
+    if (!usageData) return;
+    logger.info(`${this.constructor.name} API usage`, {
+      model,
+      ...usageData,
+    });
+  }
+
+  async complete(
+    messages: Message[],
+    jsonMode = false,
+    jsonSchema?: object
+  ): Promise<any> {
+    const body = this.formatMessages(messages, jsonMode, jsonSchema);
+    const response = await this.makeApiRequest(body);
+
+    if (!response.ok) {
+      await handleApiError(response, this.constructor.name);
+    }
+
+    const result = await response.json();
+    const content = this.extractContent(result);
+
+    if (!content) {
+      throw new Error(
+        `No content in ${this.constructor.name} response: ${JSON.stringify(
+          result
+        )}`
+      );
+    }
+
+    this.logUsage(result.usage || result.usageMetadata, this.model);
+
+    if (jsonMode) {
+      try {
+        return JSON.parse(content);
+      } catch (e) {
+        throw new Error(`Failed to parse JSON response: ${content}`);
+      }
+    }
+
+    return content;
+  }
+}
+
+export class OpenAIClient extends BaseLLMClient {
+  constructor(model: string) {
+    super(model, {
+      baseUrl: "https://api.openai.com/v1/chat/completions",
+      apiKey: process.env["OPENAI_API_KEY"]!,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  protected formatMessages(
+    messages: Message[],
+    jsonMode: boolean,
+    jsonSchema?: object
+  ) {
+    const formattedMessages = messages.map((msg) => {
+      if (msg.role === "system") {
+        return { role: "system", content: msg.text };
+      }
+
+      if (msg.role === "user" && msg.image) {
+        return {
+          role: "user",
+          content: [
+            ...(msg.text ? [{ type: "text", text: msg.text }] : []),
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:${msg.image.mimeType};base64,${msg.image.base64}`,
+              },
+            },
+          ],
+        };
+      }
+
+      return { role: msg.role, content: msg.text };
+    });
+
     const body: any = {
       model: this.model,
-      messages: this.formatMessages(messages),
+      messages: formattedMessages,
       temperature: 0,
     };
 
@@ -118,288 +189,145 @@ export class OpenAIClient {
           const systemMsg = messages[systemIdx];
           messages[systemIdx] = {
             ...systemMsg,
-            text: `${systemMsg.text}\nRespond using this JSON schema:\n${JSON.stringify(jsonSchema, null, 2)}`,
+            text: `${
+              systemMsg.text
+            }\nRespond using this JSON schema:\n${JSON.stringify(
+              jsonSchema,
+              null,
+              2
+            )}`,
           };
         }
       }
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    const response = await fetch(this.baseUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+    return body;
+  }
 
-    if (!response.ok) {
-      await handleApiError(response, "OpenAI API");
-    }
-
-    const result = await response.json();
-    const content = result.choices[0]?.message?.content;
-
-    // Log usage metadata
-    if (result.usage) {
-      logger.info("OpenAI API usage", {
-        model: this.model,
-        promptTokens: result.usage.prompt_tokens,
-        completionTokens: result.usage.completion_tokens,
-        totalTokens: result.usage.total_tokens,
-      });
-    }
-
-    if (jsonMode) {
-      return JSON.parse(content);
-    }
-
-    return content;
+  protected extractContent(response: any): string {
+    return response.choices[0]?.message?.content;
   }
 }
 
-export class GeminiClient {
-  constructor(
-    private model: string,
-    private baseUrl = "https://generativelanguage.googleapis.com",
-  ) {}
-
-  private formatMessages(messages: Message[]) {
-    const systemMessages = messages.filter((msg) => msg.role === "system");
-    const nonSystemMessages = messages.filter((msg) => msg.role !== "system");
-
-    const systemInstruction = {
-      system_instruction: {
-        parts: [
-          {
-            text: systemMessages.map((msg) => msg.text).join("\n"),
-          },
-        ],
-      },
-    };
-
-    // Format regular messages
-    const contents = nonSystemMessages.map((msg) => {
-      const parts: Array<{
-        inline_data?: { mime_type: string; data: string };
-        text?: string;
-      }> = [];
-      if (msg.image) {
-        parts.push({
-          inline_data: {
-            mime_type: msg.image.mimeType,
-            data: msg.image.base64,
-          },
-        });
-      }
-      if (msg.text) {
-        parts.push({ text: msg.text });
-      }
-      return { role: msg.role, parts };
+export class GeminiClient extends BaseLLMClient {
+  constructor(model: string) {
+    super(model, {
+      baseUrl: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env["GEMINI_API_KEY"]}`,
+      apiKey: process.env["GEMINI_API_KEY"]!,
+      headers: { "Content-Type": "application/json" },
     });
-
-    // add a text message if there are no user _text_ messages
-    if (
-      contents.length === 0 ||
-      !contents.some((c) => c.role === "user" && c.parts.some((p) => p.text))
-    ) {
-      contents.push({
-        role: "user",
-        parts: [{ text: "Please analyze my images." }],
-      });
-    }
-
-    return {
-      ...systemInstruction,
-      contents: contents.length === 1 ? contents[0] : contents,
-    };
   }
 
-  async complete(messages: Message[], jsonMode = false, jsonSchema?: object) {
-    const version = "v1beta";
-    const endpoint = `${this.baseUrl}/${version}/models/${this.model}:generateContent`;
-    const requestBody: any = this.formatMessages(messages);
-    if (jsonMode) {
-      requestBody.generationConfig = {
-        response_mime_type: "application/json",
-      };
-      if (jsonSchema) {
-        const schemaPrompt = `\nRespond using this JSON schema:\n${JSON.stringify(jsonSchema, null, 2)}`;
-        requestBody.system_instruction.parts[0].text += schemaPrompt;
-      }
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    const response = await fetch(`${endpoint}?key=${apiKey}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      await handleApiError(response, "Gemini");
-    }
-
-    const result = await response.json();
-    const content = result.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!content) {
-      throw new Error(
-        `No content in Gemini response: ${JSON.stringify(result)}`,
-      );
-    }
-
-    // Log usage metadata
-    if (result.usageMetadata) {
-      logger.info("Gemini API usage", {
-        model: this.model,
-        promptTokens: result.usageMetadata.promptTokenCount,
-        totalTokens: result.usageMetadata.totalTokenCount,
-      });
-    }
-
-    if (jsonMode) {
-      try {
-        return JSON.parse(content);
-      } catch (e) {
-        throw new Error(`Failed to parse JSON response: ${content}`);
-      }
-    }
-
-    return content;
-  }
-}
-
-export class AnthropicClient {
-  constructor(
-    private model: string,
-    private baseUrl = "https://api.anthropic.com/v1/messages",
-  ) {}
-
-  private formatMessages(
+  protected formatMessages(
     messages: Message[],
     jsonMode: boolean,
-    jsonSchema: object | undefined,
-  ): {
-    formattedMessages: Array<{ role: string; content: Array<any> }>;
-    systemPrompt: string;
-  } {
-    const userMessages: Message[] = messages.filter(
-      (msg) => msg.role === "user",
-    );
+    jsonSchema?: object
+  ) {
+    const systemMessages = messages.filter((msg) => msg.role === "system");
+    const userMessages = messages.filter((msg) => msg.role !== "system");
 
-    const formattedMessages = userMessages.map((msg: Message) => {
-      const content: Array<{
-        type: string;
-        text?: string;
-        source?: { type: string; media_type: string; data: string };
-      }> = [];
+    let systemInstruction = systemMessages.map((msg) => msg.text).join("\n");
 
-      if (msg.text) {
-        content.push({
-          type: "text",
-          text: msg.text,
-        });
-      }
-      if (msg.image) {
-        content.push({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: msg.image.mimeType,
-            data: msg.image.base64,
-          },
-        });
-      }
-      return {
-        role: "user",
-        content,
-      };
+    if (jsonMode && jsonSchema) {
+      systemInstruction += `\nRespond using this JSON schema:\n${JSON.stringify(
+        jsonSchema,
+        null,
+        2
+      )}`;
+    }
+
+    const contents = userMessages.map((msg) => ({
+      role: msg.role,
+      parts: [
+        ...(msg.image
+          ? [
+              {
+                inline_data: {
+                  mime_type: msg.image.mimeType,
+                  data: msg.image.base64,
+                },
+              },
+            ]
+          : []),
+        ...(msg.text ? [{ text: msg.text }] : []),
+      ],
+    }));
+
+    let body: any = {
+      system_instruction: {
+        parts: [{ text: systemInstruction }],
+      },
+      contents: contents.length === 1 ? contents[0] : contents,
+      generationConfig: jsonMode
+        ? undefined
+        : { response_mime_type: "application/json" },
+    };
+
+    return body;
+  }
+
+  protected extractContent(response: any): string {
+    return response.candidates?.[0]?.content?.parts?.[0]?.text;
+  }
+}
+
+export class AnthropicClient extends BaseLLMClient {
+  constructor(model: string) {
+    super(model, {
+      baseUrl: "https://api.anthropic.com/v1/messages",
+      apiKey: process.env["ANTHROPIC_API_KEY"]!,
+      headers: {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-api-key": process.env["ANTHROPIC_API_KEY"]!,
+      },
     });
+  }
 
-    const systemMessages: string[] = messages
-      .filter((msg) => msg.role === "system" && msg.text !== null)
+  protected formatMessages(
+    messages: Message[],
+    jsonMode: boolean,
+    jsonSchema?: object
+  ) {
+    const userMessages = messages.filter((msg) => msg.role === "user");
+    const systemMessages = messages
+      .filter((msg) => msg.role === "system" && msg.text)
       .map((msg) => msg.text as string);
 
-    let systemPrompt = systemMessages.join("\n");
+    const formattedMessages = userMessages.map((msg) => ({
+      role: "user",
+      content: [
+        ...(msg.text ? [{ type: "text", text: msg.text }] : []),
+        ...(msg.image
+          ? [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: msg.image.mimeType,
+                  data: msg.image.base64,
+                },
+              },
+            ]
+          : []),
+      ],
+    }));
 
+    let systemPrompt = systemMessages.join("\n");
     if (jsonMode) {
       systemPrompt += "\nRespond using ONLY JSON.";
     }
 
     return {
-      formattedMessages,
-      systemPrompt,
-    };
-  }
-
-  async complete(
-    messages: Message[],
-    jsonMode = false,
-    jsonSchema?: object,
-  ): Promise<any> {
-    const { formattedMessages, systemPrompt } = this.formatMessages(
-      messages,
-      jsonMode,
-      jsonSchema,
-    );
-
-    const body: any = {
       model: this.model,
       messages: formattedMessages,
       max_tokens: 4096,
+      ...(systemPrompt && { system: systemPrompt }),
     };
+  }
 
-    if (systemPrompt) {
-      body.system = systemPrompt;
-    }
-
-    const apiKey = process.env.ANTHROPIC_API_KEY as string;
-    const response = await fetch(this.baseUrl, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      await handleApiError(response, "Anthropic API");
-    }
-
-    const result = await response.json();
-
-    // Extract text from the content array
-    const content = result.content?.[0]?.text;
-    if (!content) {
-      throw new Error(
-        `No content in Anthropic response: ${JSON.stringify(result)}`,
-      );
-    }
-
-    if (result.usage) {
-      logger.info("Anthropic API usage", {
-        model: this.model,
-        inputTokens: result.usage.input_tokens,
-        outputTokens: result.usage.output_tokens,
-        totalTokens: result.usage.input_tokens + result.usage.output_tokens,
-      });
-    }
-
-    if (jsonMode) {
-      try {
-        return JSON.parse(content);
-      } catch (e) {
-        throw new Error(`Failed to parse JSON response: ${content}`);
-      }
-    }
-
-    return content;
+  protected extractContent(response: any): string {
+    return response.content?.[0]?.text;
   }
 }
 
@@ -407,39 +335,30 @@ export class LLMQuery {
   private messages: Message[] = [];
   private jsonMode = false;
   private jsonSchema?: object;
-  private client: OpenAIClient | GeminiClient | AnthropicClient;
+  private client: BaseLLMClient;
 
   constructor(model: AIModel) {
-    if (model.startsWith("gpt-")) {
-      this.client = new OpenAIClient(model);
-    } else if (model.startsWith("gemini-")) {
-      this.client = new GeminiClient(model);
-    } else if (model.startsWith("claude-")) {
-      this.client = new AnthropicClient(model);
-    } else {
-      throw new Error(`Unsupported model: ${model}`);
-    }
+    this.client = this.createClient(model);
   }
 
-  system(prompt: string): LLMQuery {
-    this.messages.push({
-      role: "system",
-      text: prompt,
-      image: null,
-    });
+  private createClient(model: AIModel): BaseLLMClient {
+    if (model.startsWith("gpt-")) return new OpenAIClient(model);
+    if (model.startsWith("gemini-")) return new GeminiClient(model);
+    if (model.startsWith("claude-")) return new AnthropicClient(model);
+    throw new Error(`Unsupported model: ${model}`);
+  }
+
+  system(prompt: string): this {
+    this.messages.push({ role: "system", text: prompt, image: null });
     return this;
   }
 
-  user(prompt: string): LLMQuery {
-    this.messages.push({
-      role: "user",
-      text: prompt,
-      image: null,
-    });
+  user(prompt: string): this {
+    this.messages.push({ role: "user", text: prompt, image: null });
     return this;
   }
 
-  image({ mimeType, base64 }: { mimeType: string; base64: string }): LLMQuery {
+  image({ mimeType, base64 }: ImageContent): this {
     this.messages.push({
       role: "user",
       text: null,
@@ -448,7 +367,7 @@ export class LLMQuery {
     return this;
   }
 
-  outputJson(schema?: object): LLMQuery {
+  outputJson(schema?: object): this {
     this.jsonMode = true;
     this.jsonSchema = schema;
     return this;
@@ -457,32 +376,32 @@ export class LLMQuery {
   async execute(maxAttempts = 5): Promise<any> {
     let attempt = 0;
     let lastError: Error | null = null;
+
     while (true) {
       try {
         return await this.client.complete(
           this.messages,
           this.jsonMode,
-          this.jsonSchema,
+          this.jsonSchema
         );
-      } catch (error: unknown) {
-        if (!(error instanceof Error)) {
-          throw error;
-        }
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
 
-        if ((error as any).status === 503) {
+        if ((error as ApiError).status === 503) {
           attempt++;
           lastError = error;
           logger.warn(
-            `Received 503 error, attempt ${attempt} of ${maxAttempts}`,
+            `Received 503 error, attempt ${attempt} of ${maxAttempts}`
           );
+
           const shouldContinue = await exponentialBackoff(attempt, maxAttempts);
-          if (shouldContinue) {
-            continue;
+          if (!shouldContinue) {
+            throw new Error(
+              `Maximum retry attempts (${maxAttempts}) exceeded: ${error.message}`,
+              { cause: lastError }
+            );
           }
-          throw new Error(
-            `Maximum retry attempts (${maxAttempts}) exceeded: ${error.message}`,
-            { cause: lastError },
-          );
+          continue;
         }
         throw error;
       }

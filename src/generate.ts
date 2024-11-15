@@ -1,10 +1,33 @@
-import type { AIModel, GenerateFormRequest, ValidationRequest } from "./common";
+import {
+  AIModel,
+  GenerateFormRequest,
+  GenerateFormResponse,
+  ValidationDefaults,
+  ValidationRequest,
+  ValidationResponse,
+} from "./common";
 import { LLMQuery } from "./llm";
-import * as typia from "typia";
 
-interface ValidationResponse {
-    isCorrect: boolean;
-    feedback: string;
+import { createLogger } from "./logging";
+const logger = createLogger("generate");
+
+// Look for guards like ```javascript or ```jsx. Extract the contents from the guards
+// and return the contents as a string
+export function extractGuardedCode(response: any) {
+  const guardRegex = /```(?:javascript|jsx)\n([\s\S]+?)\n```/i;
+  const match = response.match(guardRegex);
+  if (!match) {
+    return {
+      app: response,
+      context: "",
+    };
+  }
+  const context = response.replace(guardRegex, "");
+  const code = match[1];
+  return {
+    app: code,
+    context,
+  };
 }
 
 export async function generateFormFromImage({
@@ -12,48 +35,45 @@ export async function generateFormFromImage({
   model,
   systemPrompt,
   userPrompt,
-}: GenerateFormRequest): Promise<string> {
+}: GenerateFormRequest): Promise<GenerateFormResponse> {
   const query = new LLMQuery(model as AIModel)
     .system(systemPrompt)
     .user(userPrompt)
     .image(imageData);
 
   let response = await query.execute();
-  if (response.startsWith("```javascript")) {
-    // strip ``` guard from response if present
-    response = response.replace("```javascript", "");
-    response = response.replace("```", "");
-  }
-
-  return response as string;
+  return extractGuardedCode(response);
 }
 
-export async function validateUserResponse({
-  model,
-  screenshot,
-}: ValidationRequest): Promise<ValidationResponse> {
-  const schema = typia.json.application<[ValidationResponse]>();
+export async function validateUserResponse(
+  request: ValidationRequest
+): Promise<ValidationResponse> {
+  const {
+    answers,
+    globalContext,
+    model = ValidationDefaults.model,
+    prompt = ValidationDefaults.userPrompt,
+    screenshot = "",
+  } = request;
 
   const query = new LLMQuery(model as AIModel)
-    .system(
-      "You are a validation assistant. Examine the screenshot showing user input highlighted in green and provide detailed feedback.",
-    )
+    .system(ValidationDefaults.systemPrompt)
+    .user(prompt)
     .user(
       `
-Examine the green highlighted input in the screenshot and the surrounding context.
-Was the user input correct? 
-Provide detailed feedback explaining why or why not.
-
-Return a JSON object with feedback (string) and isCorrect (boolean) fields.
-`.trim(),
+Global context is ${globalContext}
+User answers and their contexts are:
+${answers
+  .map(
+    ({ answer, context }, index) =>
+      `Answer ${index + 1}: ${answer}, Context: ${context}`
+  )
+  .join("\n")}
+`
     )
-    .image({
-      base64: screenshot,
-      mimeType: "image/png",
-    })
-    .outputJson(schema);
+    .outputJson();
 
   const response = await query.execute();
-  console.log("Response", response);
+  logger.debug("Response", response);
   return response as ValidationResponse;
 }

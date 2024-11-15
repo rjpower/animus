@@ -1,12 +1,17 @@
 import express, { NextFunction, Request, Response } from "express";
-import typia from "typia";
-import expressWinston from "express-winston";
+import { Buffer } from "buffer";
 import fs from "fs";
 import multer from "multer";
 import path from "path";
-import winston from "winston";
+import sharp from "sharp";
+import { createLogger, LogLevels } from "./logging";
 
-import { AIModel, FormGeneratorDefaults, ValidationRequest } from "./common";
+import {
+  AIModel,
+  FormGeneratorDefaults,
+  GenerateFormResponse,
+  ValidationRequest,
+} from "./common";
 import { generateFormFromImage, validateUserResponse } from "./generate";
 
 function ensureLogDir(subDir: string): string {
@@ -19,9 +24,9 @@ function ensureLogDir(subDir: string): string {
 
 function getTimestamp(): string {
   const now = new Date();
-  return `${
-    now.toISOString().split("T")[0]
-  }-${now.getHours()}-${now.getMinutes()}`;
+  const hours = now.getHours().toString().padStart(2, "0");
+  const minutes = now.getMinutes().toString().padStart(2, "0");
+  return `${now.toISOString().split("T")[0]}-${hours}-${minutes}`;
 }
 
 function saveScreenshot(buffer: Buffer, routeName: string): string {
@@ -45,47 +50,88 @@ const PORT = process.env.PORT || 3000;
 const upload = multer({ storage: multer.memoryStorage() });
 
 // Logging middleware
-const logger = winston.createLogger({
-  transports: [
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.simple()
-      ),
-    }),
-  ],
-});
+const logger = createLogger("server");
 
 // Request logging middleware
-app.use(
-  expressWinston.logger({
-    winstonInstance: logger,
-    meta: true,
-    msg: "HTTP {{req.method}} {{req.url}} {{res.statusCode}} {{res.responseTime}}ms",
-    expressFormat: true,
-    colorize: true,
-  })
-);
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    logger.info(
+      `HTTP ${req.method} ${req.url} ${res.statusCode} ${duration}ms`
+    );
+  });
+  next();
+});
 
 // Error logging middleware
-app.use(
-  expressWinston.errorLogger({
-    winstonInstance: logger,
-    meta: true,
-  })
-);
-
-// Regular middleware
-app.use(express.json({ limit: "50mb" }));
-app.use(express.static(path.join(__dirname, "../dist")));
-
-// Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   logger.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
 });
 
+// Regular middleware
+app.use(express.json({ limit: "50mb" }));
+app.use(express.static(path.join(__dirname, "../dist")));
+
 // API endpoints
+async function processImageAndGenerateForm(
+  imageBuffer: Buffer,
+  mimeType: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+  routeName: string
+): Promise<GenerateFormResponse> {
+  const responseDir = ensureLogDir("responses");
+  const files = fs
+    .readdirSync(responseDir)
+    .filter((file) => file.startsWith(`${routeName}-`))
+    .sort()
+    .reverse();
+
+  logger.debug(files);
+
+  if (files.length > 0) {
+    const latestFile = path.join(responseDir, files[0]);
+    const previousResponse = JSON.parse(fs.readFileSync(latestFile, "utf-8"));
+    // log keys to console
+    logger.debug(Object.keys(previousResponse));
+    if (previousResponse) {
+      return previousResponse;
+    }
+  }
+
+  const imageData = {
+    base64: imageBuffer.toString("base64"),
+    mimeType,
+  };
+
+  const formResponse = await generateFormFromImage({
+    imageData,
+    model,
+    systemPrompt,
+    userPrompt,
+  });
+
+  // Generate thumbnail
+  const thumbnail = await sharp(imageBuffer)
+    .resize(600, 600, {
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .jpeg({ quality: 50 })
+    .toBuffer();
+
+  const response = {
+    ...formResponse,
+    thumbnail: `data:image/jpeg;base64,${thumbnail.toString("base64")}`,
+  };
+
+  saveResponse(response, routeName);
+  return response;
+}
+
 app.post(
   "/api/design",
   upload.single("image"),
@@ -98,24 +144,14 @@ app.post(
 
       saveScreenshot(req.file.buffer, "design");
 
-      const imageData = {
-        base64: req.file.buffer.toString("base64"),
-        mimeType: req.file.mimetype,
-      };
-
-      const model = req.body.model || AIModel.GPT4O;
-      const systemPrompt = req.body.systemPrompt;
-      const userPrompt = req.body.userPrompt;
-
-      const formHtml = await generateFormFromImage({
-        imageData,
-        model,
-        systemPrompt,
-        userPrompt,
-      });
-
-      const response = { html: formHtml };
-      saveResponse(response, "design");
+      const response = await processImageAndGenerateForm(
+        req.file.buffer,
+        req.file.mimetype,
+        req.body.model || FormGeneratorDefaults.model,
+        req.body.systemPrompt || FormGeneratorDefaults.systemPrompt,
+        req.body.userPrompt || FormGeneratorDefaults.userPrompt,
+        "design"
+      );
       res.json(response);
     } catch (error) {
       next(error);
@@ -123,7 +159,7 @@ app.post(
   }
 );
 
-app.get("/api/demo/:imageName", async (req, res) => {
+app.get("/api/demo/:imageName", async (req, res, next) => {
   const imagePath = path.join(
     __dirname,
     "../static/demo",
@@ -131,30 +167,30 @@ app.get("/api/demo/:imageName", async (req, res) => {
   );
   try {
     const imageBuffer = fs.readFileSync(imagePath);
-    const imageData = {
-      base64: imageBuffer.toString("base64"),
-      mimeType: "image/jpeg",
-    };
 
-    const formHtml = await generateFormFromImage({
-      imageData,
-      model: AIModel.GEMINI_FLASH_8B,
-      systemPrompt: FormGeneratorDefaults.systemPrompt,
-      userPrompt: FormGeneratorDefaults.userPrompt,
-    });
+    const response = await processImageAndGenerateForm(
+      imageBuffer,
+      "image/jpeg",
+      FormGeneratorDefaults.model,
+      FormGeneratorDefaults.systemPrompt,
+      FormGeneratorDefaults.userPrompt,
+      "demo"
+    );
 
-    res.json({ html: formHtml });
+    res.json(response);
   } catch (error) {
-    res.status(404).json({ error: "Demo image not found" });
+    next(error);
   }
 });
 
 app.post("/api/validate", async (req, res, next) => {
   try {
-    const validationRequest = typia.assert<ValidationRequest>(req.body);
+    const validationRequest = req.body as ValidationRequest;
 
-    const imageBuffer = Buffer.from(validationRequest.screenshot, "base64");
-    saveScreenshot(imageBuffer, "validate");
+    if (validationRequest.screenshot) {
+      const imageBuffer = Buffer.from(validationRequest.screenshot!, "base64");
+      saveScreenshot(imageBuffer, "validate");
+    }
 
     const validation = await validateUserResponse(validationRequest);
     saveResponse(validation, "validate");
@@ -164,20 +200,15 @@ app.post("/api/validate", async (req, res, next) => {
   }
 });
 
-// Log static file requests
-app.use("/static", (req, res, next) => {
-  logger.info(`Static file request: ${req.url}`);
-  next();
-});
-
 // Serve static files
 app.use("/static", express.static(path.join(__dirname, "../static")));
+app.use("/", express.static(path.join(__dirname, "../dist/client")));
 
 // Serve index.html for all routes to support client-side routing
 app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "../dist/index.html"));
+  res.sendFile(path.join(__dirname, "../dist/client/index.html"));
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  logger.info(`Server running at http://localhost:${PORT}`);
 });

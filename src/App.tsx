@@ -4,10 +4,10 @@ import { Link, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import "@mantine/core/styles.css";
 import {
   AppShell,
+  Button,
   Container,
   Group,
   MantineProvider,
-  Text,
   Title,
 } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
@@ -16,7 +16,6 @@ import { Image } from "@mantine/core";
 import { Book } from "./Book";
 import { Config } from "./Config";
 import { Landing } from "./Landing";
-import { ComponentLoaderTest } from "./ComponentLoaderTest";
 
 const App: React.FC = () => {
   return (
@@ -39,15 +38,22 @@ const App: React.FC = () => {
                     <Title order={4}>Animus Codex</Title>
                   </Group>
                   <Group ml="xl">
-                    <Link to="/book">
-                      <Text fw={500}>Book</Text>
-                    </Link>
-                    <Link to="/config">
-                      <Text fw={500}>Settings</Text>
-                    </Link>
-                    <Link to="/test">
-                      <Text fw={500}>Test Components</Text>
-                    </Link>
+                    <Button
+                      component={Link}
+                      to="/book"
+                      variant="subtle"
+                      color="gray"
+                    >
+                      Book
+                    </Button>
+                    <Button
+                      component={Link}
+                      to="/config"
+                      variant="subtle"
+                      color="gray"
+                    >
+                      Settings
+                    </Button>
                   </Group>
                 </Group>
               </Group>
@@ -58,7 +64,6 @@ const App: React.FC = () => {
               <Route path="/" element={<Landing />} />
               <Route path="/book" element={<Book />} />
               <Route path="/config" element={<Config />} />
-              <Route path="/test" element={<ComponentLoaderTest />} />
             </Routes>
           </AppShell.Main>
         </AppShell>

@@ -4,20 +4,20 @@ import {
   LoadingOverlay,
   Paper,
   Text,
-  Textarea,
 } from "@mantine/core";
 import "@mantine/core/styles.css";
 import { useForm } from "@mantine/form";
 import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { DynamicForm } from "./DynamicForm";
-import { AIModel, FormGeneratorDefaults } from "./common";
+import { FormGeneratorDefaults, GenerateFormResponse } from "./common";
 
 function demoButton(
   demoLink: string,
   setLoading: React.Dispatch<React.SetStateAction<boolean>>,
-  setFormHtml: React.Dispatch<React.SetStateAction<string>>
+  setFormCode: React.Dispatch<React.SetStateAction<string>>
 ) {
+  const fileName = demoLink.split("/").pop()?.split(".")[0] || "Demo";
   return (
     <Button
       variant="light"
@@ -25,8 +25,8 @@ function demoButton(
         setLoading(true);
         try {
           const response = await fetch(`/api/demo/${demoLink}`);
-          const data = await response.json();
-          setFormHtml(data.html);
+          const data: GenerateFormResponse = await response.json();
+          setFormCode(data.app);
         } catch (error) {
           console.error("Error loading demo:", error);
         } finally {
@@ -34,35 +34,24 @@ function demoButton(
         }
       }}
     >
-      Tobira Worksheet
+      {fileName} Worksheet
     </Button>
   );
 }
 
 export const Book: React.FC = () => {
   const [loading, setLoading] = useState(false);
-  const [formHtml, setFormHtml] = useState<string>(
-    `function Component() {
-      return <div>Generated form will appear here.</div>;
-    }
+  const [formCode, setFormCode] = useState<string>(
+    `
+function Component() {
+  return <div>Generated form will appear here.</div>;
+}
 
-    export default Component;`
+export default Component;
+`
   );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const form = useForm({
-    initialValues: {
-      systemPrompt: FormGeneratorDefaults.systemPrompt,
-      userPrompt: FormGeneratorDefaults.userPrompt,
-    },
-    validate: {
-      systemPrompt: (value) =>
-        value.length < 10
-          ? "System prompt must be at least 10 characters"
-          : null,
-      userPrompt: (value) =>
-        value.length < 10 ? "User prompt must be at least 10 characters" : null,
-    },
-  });
+  const form = useForm({});
 
   const onDrop = (acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -76,21 +65,14 @@ export const Book: React.FC = () => {
     setLoading(true);
     const formData = new FormData();
     formData.append("image", selectedFile);
-    formData.append(
-      "model",
-      localStorage.getItem("selectedModel") || AIModel.GPT4O
-    );
-    formData.append("systemPrompt", form.values.systemPrompt);
-    formData.append("userPrompt", form.values.userPrompt);
 
     try {
       const response = await fetch("/api/design", {
         method: "POST",
         body: formData,
       });
-
       const data = await response.json();
-      setFormHtml(data.html);
+      setFormCode(data.app);
     } catch (error) {
       console.error("Error uploading image:", error);
     } finally {
@@ -119,11 +101,11 @@ export const Book: React.FC = () => {
       <LoadingOverlay visible={loading} />
 
       <div style={{ flex: 1, overflow: "auto" }}>
-        <Group>
-          <Text size="sm">Try a demo:</Text>
-          {demoButton("tobira-4.2.jpg", setLoading, setFormHtml)}
-          {demoButton("tobira-5.3.jpg", setLoading, setFormHtml)}
-          {demoButton("tobira-5.9.jpg", setLoading, setFormHtml)}
+        <Group grow>
+          <Text size="sm">Demo links:</Text>
+          {demoButton("tobira-4.2.jpg", setLoading, setFormCode)}
+          {demoButton("tobira-5.3.jpg", setLoading, setFormCode)}
+          {demoButton("tobira-5.9.jpg", setLoading, setFormCode)}
         </Group>
 
         <Paper
@@ -133,10 +115,11 @@ export const Book: React.FC = () => {
             border: "2px dashed #ccc",
             borderRadius: "8px",
             cursor: "pointer",
+            marginTop: "1rem",
           }}
         >
           <input {...getInputProps()} />
-          <Group justify="center" align="center" gap="md">
+          <Group justify="center" align="center">
             <Text size="xl" fw={500}>
               {isDragActive
                 ? "Drop the image here"
@@ -149,26 +132,7 @@ export const Book: React.FC = () => {
         </Paper>
 
         <form onSubmit={form.onSubmit(handleSubmit)}>
-          <Textarea
-            label="System Prompt"
-            minRows={6}
-            autosize={true}
-            {...form.getInputProps("systemPrompt")}
-          />
-
-          <Textarea
-            label="User Prompt"
-            minRows={6}
-            autosize={true}
-            {...form.getInputProps("userPrompt")}
-          />
-
-          <Button
-            type="submit"
-            disabled={!selectedFile || !form.isValid()}
-            size="lg"
-            mt="md"
-          >
+          <Button type="submit" disabled={!selectedFile} size="lg" mt="md">
             Generate Form
           </Button>
         </form>
@@ -182,7 +146,7 @@ export const Book: React.FC = () => {
           flexDirection: "column",
         }}
       >
-        <DynamicForm html={formHtml} />
+        <DynamicForm code={formCode} />
       </div>
     </div>
   );
