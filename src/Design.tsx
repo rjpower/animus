@@ -14,6 +14,7 @@ import React, { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { DynamicForm } from "./DynamicForm";
 import { AIModel, GenerateFormWebResponse, GenerationMode } from "./common";
+import { Link } from "react-router-dom";
 
 function demoButton(
   demoLink: string,
@@ -67,6 +68,14 @@ export default Component;
   );
   const form = useForm({});
 
+  const hasApiKey = () => {
+    return !!(
+      localStorage.getItem("openai_api_key") ||
+      localStorage.getItem("gemini_api_key") ||
+      localStorage.getItem("anthropic_api_key")
+    );
+  };
+
   const onDrop = (acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
       setSelectedFile(acceptedFiles[0]);
@@ -84,7 +93,8 @@ export default Component;
       "modelConfig",
       JSON.stringify({
         model:
-          localStorage.getItem("generationModel") || AIModel.GEMINI_FLASH_LATEST,
+          localStorage.getItem("generationModel") ||
+          AIModel.GEMINI_FLASH_LATEST,
         apiKeys: {
           openai: localStorage.getItem("openai_api_key") || "",
           gemini: localStorage.getItem("gemini_api_key") || "",
@@ -139,33 +149,49 @@ export default Component;
             value={generationMode}
             onChange={(value) => setGenerationMode(value as GenerationMode)}
             data={[
-              { label: "Match Original Layout", value: GenerationMode.REPLICATE },
+              {
+                label: "Match Original Layout",
+                value: GenerationMode.REPLICATE,
+              },
               { label: "Create New Design", value: GenerationMode.GENERATE },
             ]}
           />
           <Paper
             p="md"
-            {...getRootProps()}
+            {...(hasApiKey() ? getRootProps() : {})}
             style={{
               border: "2px dashed #ccc",
               borderRadius: "8px",
-              cursor: "pointer",
+              cursor: hasApiKey() ? "pointer" : "not-allowed",
               minHeight: "100px",
+              opacity: hasApiKey() ? 1 : 0.6,
+              position: "relative",
             }}
           >
-            <input {...getInputProps()} />
-            <Stack align="center" justify="center" h="100%">
-              <Text size="md" fw={500} ta="center">
-                {isDragActive
-                  ? "Drop the image here"
-                  : selectedFile
-                  ? `Selected: ${selectedFile.name}`
-                  : "Drag and drop or select an image"}
-              </Text>
-              <Button size="sm">Select Image</Button>
-            </Stack>
+            {hasApiKey() ? (
+              <>
+                <input {...getInputProps()} />
+                <Stack align="center" justify="center" h="100%">
+                  <Text size="md" fw={500} ta="center">
+                    {isDragActive
+                      ? "Drop the image here"
+                      : selectedFile
+                      ? `Selected: ${selectedFile.name}`
+                      : "Drag and drop or select an image"}
+                  </Text>
+                  <Button size="sm">Select Image</Button>
+                </Stack>
+              </>
+            ) : (
+              <Stack align="center" justify="center" h="100%">
+                <Text size="md" fw={500} ta="center">
+                  Configure an API key in the <Link to="/config">settings</Link>{" "}
+                  to use your own images
+                </Text>
+              </Stack>
+            )}
           </Paper>
-          
+
           <form onSubmit={form.onSubmit(handleSubmit)}>
             <Stack gap="xs">
               <Button type="submit" disabled={!selectedFile} fullWidth>

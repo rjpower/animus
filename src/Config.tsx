@@ -6,13 +6,17 @@ import { AIModel } from "./common";
 export const Config: React.FC = () => {
   const form = useForm({
     initialValues: {
-      generationModel: localStorage.getItem("generationModel") as AIModel || AIModel.GPT4O,
-      validationModel: localStorage.getItem("validationModel") as AIModel || AIModel.GPT4O,
+      generationModel:
+        (localStorage.getItem("generationModel") as AIModel) ||
+        AIModel.CLAUDE35_SONNET,
+      validationModel:
+        (localStorage.getItem("validationModel") as AIModel) ||
+        AIModel.GEMINI_FLASH_LATEST,
       apiKeys: {
         openai: localStorage.getItem("openai_api_key") || "",
         anthropic: localStorage.getItem("anthropic_api_key") || "",
         gemini: localStorage.getItem("gemini_api_key") || "",
-      }
+      },
     },
     onValuesChange: (values) => {
       localStorage.setItem("generationModel", values.generationModel);
@@ -20,7 +24,7 @@ export const Config: React.FC = () => {
       localStorage.setItem("openai_api_key", values.apiKeys.openai);
       localStorage.setItem("anthropic_api_key", values.apiKeys.anthropic);
       localStorage.setItem("gemini_api_key", values.apiKeys.gemini);
-    }
+    },
   });
 
   return (

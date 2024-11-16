@@ -1,5 +1,6 @@
 import React from "react";
-import { Container, Text, Title, Space, Image } from "@mantine/core";
+import { Container, Text, Title, Space, Image, Paper } from "@mantine/core";
+import { Link } from "react-router-dom";
 
 export const About: React.FC = () => {
   return (
@@ -11,6 +12,11 @@ export const About: React.FC = () => {
         fit="contain"
         alt="Animus Codex Hero"
       />
+      <Space h="md" />
+      <strong>TLDR: Interactive textbooks using LLMs:</strong>
+      <i>
+        It kind of works, but I won't be replacing my textbook with it tomorrow.
+      </i>
       <Space h="md" />
       <Text>
         I was trying to work through my Japanese workbook the other day, and as
@@ -24,16 +30,21 @@ export const About: React.FC = () => {
         app directly? Then I could get instant feedback and avoid having to
         provide context etc. It turns out that LLMs are pretty good at the form
         generation, but you need to be able to call back into an LLM in order to
-        validate your answer. This is the result of trying to wire these things
-        together in a bit of a janky way.
+        validate your answer.
       </Text>
       <Space h="md" />
       <Text>
-        You can try out the demo links and test your Japanese or math skills. If
-        you configure an API key, you can also upload and generate your own
-        forms. I've found that Sonnet is quite good at making good looking
-        forms, but it can take up to 30 seconds to provide a response. (I
-        haven't wired up streaming yet.)
+        Head over to the <Link to="/design">design</Link> page to see how it and
+        try out the demo links to test your Japanese or math skills. If you
+        configure an API key, you can also upload and generate your own forms.
+        I've found that Sonnet is quite good at making good looking forms, but
+        it can take up to 30 seconds to provide a response. (I haven't wired up
+        streaming yet.)
+      </Text>
+      <Space h="md" />
+      <Text>
+        The code for this project is available on{" "}
+        <a href="https://github.com/rjpower/animus">Github</a>.
       </Text>
     </Container>
   );

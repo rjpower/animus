@@ -15,8 +15,6 @@ COPY index.html ./index.html
 RUN npm run build
 ENV NODE_ENV=production
 
-COPY cache/ ./cache/
-
 EXPOSE 3000
 
 CMD ["node", "dist/server.js"]

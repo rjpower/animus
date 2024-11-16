@@ -1,5 +1,4 @@
 import { Buffer } from "buffer";
-import crypto from "crypto";
 import express, { NextFunction, Request, Response } from "express";
 import fs from "fs";
 import multer from "multer";
@@ -9,7 +8,6 @@ import { createLogger } from "./logging";
 
 import {
   CheckAnswerWebRequest,
-  GenerateFormWebRequest,
   GenerateFormWebResponse,
   GenerationMode,
 } from "./common";
@@ -21,8 +19,6 @@ import {
   GenerateFormRequest,
   validateUserResponse,
 } from "./generate";
-
-
 
 const app = express();
 const PORT = process.env.PORT || 3000;
