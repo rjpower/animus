@@ -1,0 +1,11 @@
+testdata/
+database.*
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+dist
+log/
+logs/
+.aider*
